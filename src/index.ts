@@ -253,10 +253,10 @@ export class ChatLog extends Service {
       return false
     }
 
-    const runCatchupForBot = async (bot: any, trigger: string) => {
+    const runCatchupForBot = async (bot: any, trigger: string): Promise<boolean> => {
       if (!(await waitForBotReady(bot))) {
-        logger.warn('等待 OneBot 通道可用超时，补录跳过')
-        return
+        logger.warn('等待 OneBot 通道可用超时，补录跳过（bot 上线后会重试）')
+        return false
       }
       let guilds: string[] = []
       try {
@@ -264,11 +264,11 @@ export class ChatLog extends Service {
         guilds = (res?.data ?? []).map((g: any) => String(g.id)).filter(Boolean)
       } catch (e: any) {
         logger.warn('获取群列表失败，补录跳过:', e?.message || e)
-        return
+        return false
       }
       if (!guilds.length) {
         logger.info('没有群，补录跳过')
-        return
+        return false
       }
       let total = 0
       for (const gid of guilds) {
@@ -283,16 +283,26 @@ export class ChatLog extends Service {
         }
       }
       logger.info(`[${trigger}] 补录结束，共入库 ${total} 条`)
+      return true
     }
 
     if (this.config.catchupOnReconnect !== false) {
-      // 每台 bot 首次上线（含重启后的重连）触发一次；用 sid 去重，避免重复补录
-      const seen = new Set<string>()
+      /**
+       * 每台 bot 首次**成功**补录后不再重复。
+       * 坑：koishi 先起、QQ 后登录（无头环境卡在登录页）时，启动期的
+       * `waitForBotReady` 会超时；此时若把 sid 记为"已处理"，等 bot 真正
+       * ONLINE 就不会再补录（2026-11-17 事故）。因此只有成功才落 `done`，
+       * 超时/失败留给下一次 `bot-status-updated` 重试。
+       */
+      const done = new Set<string>()
+      const inflight = new Set<string>()
       const trigger = (bot: any) => {
-        if (!bot?.sid || seen.has(bot.sid)) return
-        seen.add(bot.sid)
-        runCatchupForBot(bot, 'reconnect').catch((e) =>
-          logger.warn('补录异常:', e?.message || e))
+        if (!bot?.sid || done.has(bot.sid) || inflight.has(bot.sid)) return
+        inflight.add(bot.sid)
+        runCatchupForBot(bot, 'reconnect')
+          .then((ok) => { if (ok) done.add(bot.sid) })
+          .catch((e) => logger.warn('补录异常:', e?.message || e))
+          .finally(() => inflight.delete(bot.sid))
       }
 
       this.ctx.on('bot-status-updated', (bot: any) => {
