@@ -1,5 +1,4 @@
 import { Context } from 'koishi'
-import { } from 'koishi-plugin-jieba'
 import { } from '@koishijs/plugin-database-mysql'
 import type { ChatLog } from './index'
 

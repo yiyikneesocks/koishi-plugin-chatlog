@@ -4,6 +4,7 @@ import { Context } from 'koishi'
 import type { MediaConfig } from './types'
 import { normalizeContent, isMediaOnly, isFaceOnly, extractImageUrl, extractUrl } from './normalize'
 import { saveImage } from './media'
+import { getJieba } from './jieba'
 
 /**
  * 把一条消息按「正常实时接收时完全相同的规则」写入数据库：
@@ -23,7 +24,6 @@ export async function ingestMessage(
   nickname: string | null | undefined,
   when: Date,
   mediaOpts: MediaConfig = {},
-  segment?: (text: string) => Promise<string[]>,
 ): Promise<boolean> {
   if (!content) return false
 
@@ -84,8 +84,8 @@ export async function ingestMessage(
 
   const plain = normalizeContent(content)
   const EMOJI_RE = /\p{Extended_Pictographic}/u
-  const cut = segment ?? ((t: string) => ctx.jieba?.cut(t) ?? [])
-  const jbFltList = (await cut(plain))
+  // 分词统一走 jieba 服务；await 同时兼容同步（koishi-plugin-jieba）与异步 provider。
+  const jbFltList = (await getJieba(ctx).cut(plain))
     .filter((word) => word.trim().length > 0)
     .filter((word) => [...word].length >= 2 || EMOJI_RE.test(word))
 

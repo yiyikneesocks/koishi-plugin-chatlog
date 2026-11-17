@@ -8,17 +8,17 @@
 // 消费型插件**之前**（Koishi 按加载顺序执行 middleware，非 prepend 的排在后面），
 // 这样指令（如 wd）与「你好」不会被收集，与原 dedide 行为一致。
 import { Schema, Context, Service, h } from 'koishi'
-import type {} from 'koishi-plugin-jieba'      // 可选：提供 ctx.jieba（@node-rs/jieba）
-import type { Jieba } from '@azulores/jieba-hanlp' // 可选：@azulores/jieba-hanlp 分词器
 import { extendChatlogModels, ChatlogMessage, MediaConfig } from './types'
 import { ingestMessage } from './ingest'
 import { catchupGuild, CatchupOptions, CatchupResult } from './catchup'
 import { extractImageUrl } from './normalize'
 import { removeImage } from './media'
+import { getJieba } from './jieba'
 
 export const name = 'chatlog'
-// jieba 改为**可选**注入：segmenter=jieba 时需要它，=hanlpjieba 时不需要。
-export const inject = { required: ['database'], optional: ['jieba'] }
+// jieba 是**必需**服务：由 koishi-plugin-jieba 或 koishi-plugin-hanlpjieba 提供，
+// 消费方不感知具体实现。provider 未启用时本插件不启动（与 database 一致）。
+export const inject = ['database', 'jieba']
 
 export interface Config {
   // ── 收集 ──
@@ -58,25 +58,15 @@ export const Config: Schema<Config> = Schema.object({
   retainMessages: Schema.number()
     .description('每群保留的最新消息条数上限（超过后清理最旧的；0 = 不清理）')
     .default(0).min(0).max(100000),
-
-  segmenter: Schema.union(['jieba', 'hanlpjieba'] as const)
-    .description('分词器二选一：jieba = 用 koishi-plugin-jieba 的 ctx.jieba（默认）；'
-      + 'hanlpjieba = 用 @azulores/jieba-hanlp 本地模型（需安装该包）')
-    .default('jieba'),
 })
 
 /**
  * ChatLog 服务：给其它插件一个稳定的读写入口。
  */
 export class ChatLog extends Service {
-  // 分词器二选一（config.segmenter）：
-  //   'jieba'      → koishi-plugin-jieba 提供的 ctx.jieba（@node-rs/jieba，同步）
-  //   'hanlpjieba' → @azulores/jieba-hanlp（本地 ONNX 模型，异步）
-  // 因此 jieba 不再是必需注入。
-  static inject = { required: ['database'], optional: ['jieba'] }
+  // jieba 是必需服务（provider 由 koishi.yml 决定：jieba 或 hanlpjieba）。
+  static inject = ['database', 'jieba']
   private mediaOpts: MediaConfig & { assetsDir?: string } = {}
-  private segmenter: 'jieba' | 'hanlpjieba' = 'jieba'
-  private seg: Jieba | null = null
 
   constructor(ctx: Context, cfg: Config) {
     super(ctx, 'chatlog', true)
@@ -90,32 +80,12 @@ export class ChatLog extends Service {
       maxTotalBytes: this.config.maxImageStorageMb ? this.config.maxImageStorageMb * 1024 * 1024 : undefined,
       assetsDir: this.config.assetsDir,
     }
-    this.segmenter = this.config.segmenter ?? 'jieba'
-    if (this.segmenter === 'hanlpjieba') {
-      const inst = new (await import('@azulores/jieba-hanlp')).Jieba()
-      await inst.ready()
-      this.seg = inst as Jieba
-      this.ctx.logger('chatlog').info('tokenizer: hanlpjieba (@azulores/jieba-hanlp)')
-    } else if (!this.ctx.jieba) {
-      this.ctx.logger('chatlog').warn(
-        'tokenizer: jieba selected but koishi-plugin-jieba is not installed; '
-        + 'install it or set segmenter=hanlpjieba')
-    } else {
-      this.ctx.logger('chatlog').info('tokenizer: jieba (koishi-plugin-jieba)')
-    }
+    const jieba = getJieba(this.ctx) as any
+    this.ctx.logger('chatlog').info(
+      'tokenizer: ctx.jieba (provider: %s)', jieba?.name ?? 'unknown')
     this.setupCollector()
     this.setupCatchup()
     this.setupCommand()
-  }
-
-  /**
-   * 分词（由 segmenter 配置二选一决定实现）。
-   * 箭头函数：作为值传给 ingestMessage / catchupGuild 时仍绑定本实例，
-   * 否则 `this` 为 undefined（2026-11-17 补录报 segmenter undefined 就是这个原因）。
-   */
-  segment = async (text: string): Promise<string[]> => {
-    if (this.segmenter === 'hanlpjieba' && this.seg) return this.seg.cut(text)
-    return this.ctx.jieba?.cut(text) ?? []
   }
 
   /** 供 ingest 用的媒体配置（落盘上限等） */
@@ -199,7 +169,7 @@ export class ChatLog extends Service {
    * 消费型插件不要调用 —— 写入只属于收集器。
    */
   async ingest(content: string, guildId: string, nickname: string | null | undefined, when?: Date): Promise<boolean> {
-    return ingestMessage(content, this.ctx, guildId, nickname, when ?? new Date(), this.mediaOpts, this.segment)
+    return ingestMessage(content, this.ctx, guildId, nickname, when ?? new Date(), this.mediaOpts)
   }
 
   /** 执行一次某群的断线补录 */
@@ -207,7 +177,7 @@ export class ChatLog extends Service {
     return catchupGuild(this.ctx, bot, guildId, {
       ...this.catchupOpts(),
       logger,
-    }, this.segment)
+    })
   }
 
   private catchupOpts(): CatchupOptions {
@@ -235,7 +205,7 @@ export class ChatLog extends Service {
       // 指令消息（以本 bot 前缀开头的）不收集：next() 之后已是剩余文本，
       // 简单起见交给消费方 —— 指令通常已在前面被 command 短路。
       try {
-        await ingestMessage(c, this.ctx, session.guildId, session.author?.name ?? null, new Date(), this.mediaOpts, this.segment)
+        await ingestMessage(c, this.ctx, session.guildId, session.author?.name ?? null, new Date(), this.mediaOpts)
       } catch (e: any) {
         this.ctx.logger('chatlog').warn('实时入库失败:', e?.message || e)
       }
@@ -310,7 +280,7 @@ export class ChatLog extends Service {
           const r = await catchupGuild(this.ctx, bot, gid, {
             ...this.catchupOpts(),
             logger: (m) => logger.info(m),
-          }, this.segment)
+          })
           total += r.stored
         } catch (e: any) {
           logger.warn(`补录 ${gid} 失败:`, e?.message || e)
@@ -365,7 +335,7 @@ export class ChatLog extends Service {
         const r: CatchupResult = await catchupGuild(this.ctx, session.bot, session.guildId, {
           ...this.catchupOpts(),
           logger: (m) => logger.info(m),
-        }, this.segment)
+        })
         return `补录完成：拉取 ${r.fetched} 条，入库 ${r.stored} 条，跳过 ${r.skipped} 条`
           + (r.truncated ? '（触到单次上限，下次继续）' : '')
       })
@@ -394,8 +364,8 @@ export class ChatLog extends Service {
 }
 
 // 供消费插件使用的类型（纯函数从子模块引入）
-export { ingestMessage, catchupGuild, elementsToContent, extractImageUrl, extractUrl, normalizeContent, isMediaOnly, isFaceOnly, isImageUrl, saveImage, removeImage } from './exports'
-export type { CatchupOptions, CatchupResult } from './exports'
+export { ingestMessage, catchupGuild, elementsToContent, extractImageUrl, extractUrl, normalizeContent, isMediaOnly, isFaceOnly, isImageUrl, saveImage, removeImage, getJieba } from './exports'
+export type { CatchupOptions, CatchupResult, Awaitable, JiebaService, Segment } from './exports'
 export type { MediaConfig, ChatlogMessage, ChatlogVocab, ChatlogWatermark } from './types'
 export { restoreFaces } from './faces'
 

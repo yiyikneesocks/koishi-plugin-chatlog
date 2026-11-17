@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-chatlog",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Group chat log collector for Koishi: ingests every message (text/image/url) into the database, with jieba tokenization and offline backfill (catchup) via NapCat history API.",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
@@ -20,16 +20,14 @@
     "build": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
-    "@azulores/jieba-hanlp": "^0.1.0",
-    "koishi": "^4.18.11",
-    "koishi-plugin-jieba": "^0.5.0"
+    "koishi": "^4.18.11"
   },
-  "peerDependenciesMeta": {
-    "@azulores/jieba-hanlp": {
-      "optional": true
-    },
-    "koishi-plugin-jieba": {
-      "optional": true
+  "koishi": {
+    "service": {
+      "required": [
+        "database",
+        "jieba"
+      ]
     }
   },
   "repository": {

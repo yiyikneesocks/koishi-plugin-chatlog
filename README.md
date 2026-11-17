@@ -14,7 +14,20 @@
 npm install koishi-plugin-chatlog
 ```
 
-需要数据库插件（sqlite / mysql）与 `koishi-plugin-jieba`（分词）。
+需要数据库插件（sqlite / mysql），以及一个 **jieba 分词服务 provider**（二选一）：
+
+```bash
+npm install koishi-plugin-jieba        # @node-rs/jieba，同步，原生绑定
+# 或
+npm install koishi-plugin-hanlpjieba   # @azulores/jieba-hanlp，本地 ONNX，异步
+```
+
+本插件只 `inject: ['jieba']` 并使用 `ctx.jieba`，**不感知具体 provider**；
+同一时刻只能启用一个（同时启用会报 `service jieba has been registered`）。
+切换 provider 时**不需要改本插件，也没有 `segmenter` 之类二选一配置**。
+
+> 注意：`ctx.jieba.cut()` 在同步 provider 返回 `string[]`、在异步 provider 返回
+> `Promise<string[]>`。本插件内部一律 `await`，因此两者都兼容。
 
 ## 功能
 
@@ -55,6 +68,14 @@ ctx.chatlog.removeMessage(msg)              // 回放后消耗一条
 ctx.chatlog.touchMessage(msg)               // 刷新时间戳（7 天内不再被抽中）
 ctx.chatlog.trimVocab(keep)                 // 词表修剪
 ctx.chatlog.mediaConfig                     // 媒体落盘配置（消费方读）
+```
+
+分词**不在** `ctx.chatlog` 上：它属于独立的 `jieba` 服务，直接用 `ctx.jieba` 即可
+（本包同时导出 `getJieba(ctx)` 收窄类型，以及 `JiebaService` / `Segment` 契约类型）：
+
+```ts
+import { getJieba } from 'koishi-plugin-chatlog'
+const words = await getJieba(ctx).cut('他跑得快')   // 同步/异步 provider 都适用
 ```
 
 纯函数（`normalizeContent` / `extractImageUrl` / `restoreFaces` 等）也从包根导出。
