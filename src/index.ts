@@ -66,6 +66,11 @@ export const Config: Schema<Config> = Schema.object({
 export class ChatLog extends Service {
   // jieba 是必需服务（provider 由 koishi.yml 决定：jieba 或 hanlpjieba）。
   static inject = ['database', 'jieba']
+  // 控制台插件配置页从 `loader.resolve(name)` 取 schema，而 resolve() 会
+  // `unwrapExports()` 成 `module.default`（即本类，**不是**模块命名空间）。
+  // 只 export const Config 的话，default 上没有 Config → 配置页显示不出表单。
+  // 因此把 Config 也挂到类上（与 koishi-plugin-jieba 的写法一致）。
+  static Config = Config
   private mediaOpts: MediaConfig & { assetsDir?: string } = {}
 
   constructor(ctx: Context, cfg: Config) {
