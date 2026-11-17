@@ -130,6 +130,7 @@ export async function catchupGuild(
   bot: any,
   guildId: string,
   opts: CatchupOptions = {},
+  segment?: (text: string) => Promise<string[]>,
 ): Promise<CatchupResult> {
   const log = opts.logger ?? (() => { })
   const maxPerRun = opts.maxPerRun ?? 2000
@@ -238,7 +239,7 @@ export async function catchupGuild(
     const nickname = msg?.user?.name ?? msg?.member?.name ?? null
     const when = msg?.timestamp ? new Date(Number(msg.timestamp)) : new Date()
     try {
-      const wrote = await ingestMessage(content, ctx, guildId, nickname, when, opts)
+      const wrote = await ingestMessage(content, ctx, guildId, nickname, when, opts, segment)
       if (wrote) result.stored++
       else result.skipped++
       // 记录「实际处理过的最旧一条」——截断时的水位只能推进到这里

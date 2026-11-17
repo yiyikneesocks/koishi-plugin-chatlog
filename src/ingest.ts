@@ -23,6 +23,7 @@ export async function ingestMessage(
   nickname: string | null | undefined,
   when: Date,
   mediaOpts: MediaConfig = {},
+  segment?: (text: string) => Promise<string[]>,
 ): Promise<boolean> {
   if (!content) return false
 
@@ -83,7 +84,8 @@ export async function ingestMessage(
 
   const plain = normalizeContent(content)
   const EMOJI_RE = /\p{Extended_Pictographic}/u
-  const jbFltList = ctx.jieba.cut(plain)
+  const cut = segment ?? ((t: string) => ctx.jieba?.cut(t) ?? [])
+  const jbFltList = (await cut(plain))
     .filter((word) => word.trim().length > 0)
     .filter((word) => [...word].length >= 2 || EMOJI_RE.test(word))
 
