@@ -17,7 +17,8 @@ import { extractImageUrl } from './normalize'
 import { removeImage } from './media'
 
 export const name = 'chatlog'
-export const inject = { required: ['database'] }
+// jieba 改为**可选**注入：segmenter=jieba 时需要它，=hanlpjieba 时不需要。
+export const inject = { required: ['database'], optional: ['jieba'] }
 
 export interface Config {
   // ── 收集 ──
@@ -72,7 +73,7 @@ export class ChatLog extends Service {
   //   'jieba'      → koishi-plugin-jieba 提供的 ctx.jieba（@node-rs/jieba，同步）
   //   'hanlpjieba' → @azulores/jieba-hanlp（本地 ONNX 模型，异步）
   // 因此 jieba 不再是必需注入。
-  static inject = ['database']
+  static inject = { required: ['database'], optional: ['jieba'] }
   private mediaOpts: MediaConfig & { assetsDir?: string } = {}
   private segmenter: 'jieba' | 'hanlpjieba' = 'jieba'
   private seg: Jieba | null = null
